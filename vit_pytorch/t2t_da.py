@@ -1,4 +1,5 @@
-import math
+# all codes are fundamentally brough from https://github.com/lucidrains/vit-pytorch/blob/main/vit_pytorch/t2t.py
+
 import torch
 from torch import nn
 
@@ -6,6 +7,12 @@ from vit_pytorch.vit import Transformer
 
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
+from da_hyun.image_level_discriminator import Discriminator
+
+# python types
+from typing import Dict, List
+import string
+import math
 
 # helpers
 
@@ -24,7 +31,9 @@ class RearrangeImage(nn.Module):
 # main class
 
 class T2TViT(nn.Module):
-    def __init__(self, *, image_size, num_classes, dim, depth = None, heads = None, mlp_dim = None, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., transformer = None, t2t_layers = ((7, 4), (3, 2), (3, 2))):
+    def __init__(self, *, image_size, num_classes, dim, depth = None, 
+                 heads = None, mlp_dim = None, pool = 'cls', channels = 3, dim_head = 64, 
+                 dropout = 0., emb_dropout = 0., transformer = None, t2t_layers = ((7, 4), (3, 2), (3, 2)), domain_source=True):
         super().__init__()
         assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
@@ -65,8 +74,12 @@ class T2TViT(nn.Module):
             nn.LayerNorm(dim),
             nn.Linear(dim, num_classes)
         )
+        
+        #Hyun Edit
+        in_channels = dim
+        self.discriminator = Discriminator(in_channels, -1.0)
 
-    def forward(self, img):
+    def forward(self, img, input_domain: string='source'):
         x = self.to_patch_embedding(img)
         b, n, _ = x.shape
 
@@ -76,7 +89,21 @@ class T2TViT(nn.Module):
         x = self.dropout(x)
 
         x = self.transformer(x)
-
+        old_x = x
+        
         x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
         x = self.to_latent(x)
-        return self.mlp_head(x)
+        
+        # hyun edit
+        output = self.mlp_head(x)
+        out = dict()
+        out['pred'] = output
+        
+        # da 
+        t_domain = input_domain == 'target'
+        da_loss = self.discriminator(old_x, t_domain)
+        print(da_loss)
+        
+        out.update(da_loss)
+
+        return out
